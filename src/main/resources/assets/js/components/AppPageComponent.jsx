@@ -122,44 +122,6 @@ var AppPageComponent = React.createClass({
     }
   },
 
-  getBreadcrumbs: function () {
-    var activeTask = this.props.activeTask;
-
-    /* jshint trailing:false, quotmark:false, newcap:false */
-    /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-    var breadcrumbs = [(
-      <li key="apps"><a href="#" onClick={this.props.onDestroy}>Apps</a></li>
-    )];
-
-    if (this.state.activeViewIndex === 0) {
-      breadcrumbs.push((
-        <li className="active" key="app">
-          {this.props.model.get("id")}
-        </li>
-      ));
-    } else {
-      breadcrumbs.push((
-        <li key="app">
-          <a href="#" onClick={this.showTaskList}>
-            {this.props.model.get("id")}
-          </a>
-        </li>
-      ));
-
-      breadcrumbs.push((
-        <li className="active" key="task">{activeTask.get("id")}</li>
-      ));
-    }
-
-    return (
-      <ol className="breadcrumb">
-        {breadcrumbs}
-      </ol>
-    );
-    /* jshint trailing:true, quotmark:true, newcap:true */
-    /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-  },
-
   render: function () {
     var model = this.props.model;
 
@@ -178,7 +140,14 @@ var AppPageComponent = React.createClass({
       <PageComponent ref="pageComponent" onDestroy={this.props.onDestroy}
         size="lg">
         <div className="page-header">
-          {this.getBreadcrumbs()}
+          <ol className="breadcrumb">
+            <li>
+              <a href="#" onClick={this.props.onDestroy}>Apps</a>
+            </li>
+            <li className="active">
+              {model.get("id")}
+            </li>
+          </ol>
           <span className="h3 page-title">{model.get("id")}</span>
           <ul className="list-inline list-inline-subtext">
             <li>

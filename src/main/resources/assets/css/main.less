@@ -148,6 +148,20 @@ a,
   margin:0;
 }
 
+.page-header .breadcrumb {
+  padding: 0;
+  margin-bottom: 36px;
+  background: none;
+}
+
+.page-header .breadcrumb > li+li:before {
+  content:"\0FF1E";
+}
+
+.page-header .breadcrumb > .active {
+  color: #999;
+}
+
 .toggleabletabs-container {
   padding-left: 15px;
   padding-right: 15px;
@@ -171,13 +185,11 @@ a,
 }
 
 .breadcrumb {
-  padding: 0;
-  margin-bottom: 36px;
-  background: none;
+  background-color: #454a50;
 }
 
-.breadcrumb > li+li:before {
-  content:"\0FF1E";
+.breadcrumb > .active {
+  color: #f6f6f6;
 }
 
 .table > thead > tr > th,
