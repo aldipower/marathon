@@ -1,5 +1,6 @@
 /** @jsx React.DOM */
 
+var _ = require("underscore");
 var Mousetrap = require("mousetrap");
 var React = require("react/addons");
 var States = require("../constants/States");
@@ -25,9 +26,15 @@ var tabs = [
 var Marathon = React.createClass({
   displayName: "Marathon",
 
+  propTypes: {
+    router: React.PropTypes.object.isRequired
+  },
+
   getInitialState: function () {
     return {
+      activeAppId: null,
       activeApp: null,
+      activeAppView: null,
       activeTask: null,
       activeTabId: tabs[0].id,
       appVersionsFetchState: States.STATE_LOADING,
@@ -36,11 +43,23 @@ var Marathon = React.createClass({
       deploymentsFetchState: States.STATE_LOADING,
       fetchState: States.STATE_LOADING,
       modalClass: null,
+      route: null,
+      setAppView: _.noop,
       tasksFetchState: States.STATE_LOADING
     };
   },
 
   componentDidMount: function () {
+    var router = this.props.router;
+
+    router.on("route", this.setRoute);
+    router.on("route:about", this.setRouteAbout);
+    router.on("route:apps", this.setRouteApps);
+    router.on("route:deployments",
+      _.bind(this.activateTab, this, "deployments")
+    );
+    router.on("route:newapp", this.setRouteNewapp);
+
     // Override Mousetrap's `stopCallback` to allow "esc" to trigger even within
     // input elements so the new app modal can be closed via "esc".
     var mousetrapOriginalStopCallback = Mousetrap.stopCallback;
@@ -51,23 +70,23 @@ var Marathon = React.createClass({
 
     Mousetrap.bind("esc", function () {
       if (this.refs.modal != null) {
-        this.refs.modal.destroy();
+        this.modalDestroy();
       }
     }.bind(this));
 
     Mousetrap.bind("c", function () {
-      this.showNewAppModal();
+      router.navigate("newapp", {trigger: true});
     }.bind(this), "keyup");
 
     Mousetrap.bind("g a", function () {
       if (this.state.modalClass == null) {
-        this.onTabClick("apps");
+        router.navigate("apps", {trigger: true});
       }
     }.bind(this));
 
     Mousetrap.bind("g d", function () {
       if (this.state.modalClass == null) {
-        this.onTabClick("deployments");
+        router.navigate("deployments", {trigger: true});
       }
     }.bind(this));
 
@@ -78,19 +97,31 @@ var Marathon = React.createClass({
     }.bind(this));
 
     Mousetrap.bind("shift+,", function () {
-      this.showAboutModal();
+      router.navigate("about", {trigger: true});
     }.bind(this));
 
-    this.setPollResource(this.fetchApps);
+    this.updatePolling();
   },
 
   componentDidUpdate: function (prevProps, prevState) {
-    if (prevState.activeApp !== this.state.activeApp) {
-      if (this.state.activeApp == null) {
-        this.setPollResource(this.fetchApps);
-      } else {
-        this.setPollResource(this.fetchTasks);
-      }
+    /* jshint eqeqeq: false */
+    if (prevState.activeApp != this.state.activeApp) {
+      this.updatePolling();
+    }
+
+    if (this.state.activeAppId) {
+      this.state.setAppView(this.state.activeAppId, this.state.activeAppView);
+    }
+
+    var route = this.state.route;
+    var router = this.props.router;
+
+    if (route) {
+      router.lastRoute = _.extend(router.lastRoute, {
+        route: route.route,
+        params: route.params,
+        hash: router.currentHash()
+      });
     }
   },
 
@@ -98,15 +129,63 @@ var Marathon = React.createClass({
     this.stopPolling();
   },
 
+  setRoute: function (route, params) {
+    this.setState({
+      route: {
+        name: route,
+        params: params
+      }
+    });
+  },
+
+  setRouteAbout: function () {
+    this.modalDestroy();
+    this.setState({
+      modalClass: AboutModalComponent
+    });
+  },
+
+  setRouteApps: function (appid, view) {
+    if (appid != null) {
+      if (this.state.activeAppId !== appid) {
+        this.modalDestroy();
+      }
+
+      this.setState({
+        activeAppId: appid,
+        // activeApp could be undefined here, if this route is triggered on
+        // page load, because the collection is not ready.
+        activeApp: this.state.collection.get(appid),
+        activeAppView: view
+      });
+    } else {
+      this.activateTab("apps");
+    }
+  },
+
+  setRouteNewapp: function () {
+    this.modalDestroy();
+    this.setState({
+      modalClass: NewAppModalComponent
+    });
+  },
+
   fetchApps: function () {
     this.state.collection.fetch({
       error: function () {
         this.setState({fetchState: States.STATE_ERROR});
       }.bind(this),
-      reset: true,
       success: function () {
+        var state = this.state;
         this.fetchDeployments();
-        this.setState({fetchState: States.STATE_SUCCESS});
+        var activeApp = state.activeAppId ?
+          state.collection.get(state.activeAppId) :
+          null;
+
+        this.setState({
+          fetchState: States.STATE_SUCCESS,
+          activeApp: activeApp
+        });
       }.bind(this)
     });
   },
@@ -156,9 +235,29 @@ var Marathon = React.createClass({
     this.state.collection.create(appModel, options);
   },
 
-  handleModalDestroy: function () {
+  handleSetAppView: function (setAppView) {
     this.setState({
-      modalClass: null
+      setAppView: setAppView
+    });
+  },
+
+  modalDestroy: function () {
+    if (!this.state.modalClass) {
+      return;
+    }
+
+    var router = this.props.router;
+
+    if (router.lastRoute.hash === router.currentHash()) {
+      router.navigate(this.state.activeTabId, {trigger: true});
+    }
+
+    this.setState({
+      activeAppId: null,
+      activeApp: null,
+      modalClass: null,
+      tasksFetchState: States.STATE_LOADING,
+      appVersionsFetchState: States.STATE_LOADING
     });
   },
 
@@ -350,34 +449,56 @@ var Marathon = React.createClass({
     }
   },
 
-  showAboutModal: function (event) {
-    if (event != null) {
-      event.preventDefault();
-    }
+  updatePolling: function () {
+    var id = this.state.activeTabId;
 
-    if (this.state.modalClass !== null) {
-      return;
+    if (this.state.activeApp) {
+      this.setPollResource(this.fetchTasks);
+    } else if (id === tabs[0].id) {
+      this.setPollResource(this.fetchApps);
+    } else if (id === tabs[1].id) {
+      this.setPollResource(this.fetchDeployments);
     }
+  },
 
+  activateTab: function (id) {
     this.setState({
-      modalClass: AboutModalComponent
+      activeTabId: id
     });
   },
 
+  /*
   showAppPage: function (app) {
     this.setState({
       activeApp: app
     });
   },
+  */
 
-  showNewAppModal: function () {
-    if (this.state.modalClass !== null) {
-      return;
-    }
+  routeAbout: function () {
+    /* jshint trailing:false, quotmark:false, newcap:false */
+    /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
+    return (
+      <AboutModalComponent
+        onDestroy={this.modalDestroy}
+        ref="modal" />
+    );
+    /* jshint trailing:true, quotmark:true, newcap:true */
+    /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
+  },
 
-    this.setState({
-      modalClass: NewAppModalComponent
-    });
+  routeNewApp: function () {
+    /* jshint trailing:false, quotmark:false, newcap:false */
+    /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
+    return (
+      <NewAppModalComponent
+        model={this.state.activeApp}
+        onDestroy={this.modalDestroy}
+        onCreate={this.handleAppCreate}
+        ref="modal" />
+    );
+    /* jshint trailing:true, quotmark:true, newcap:true */
+    /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
   },
 
   onTabClick: function (id) {
@@ -387,7 +508,12 @@ var Marathon = React.createClass({
     });
   },
 
-  getAppPage: function () {
+  routeApps: function () {
+    var activeApp = this.state.collection.get(this.state.activeAppId);
+    if (!activeApp) {
+      return;
+    }
+
     /* jshint trailing:false, quotmark:false, newcap:false */
     /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
     return (
@@ -397,6 +523,7 @@ var Marathon = React.createClass({
         destroyApp={this.destroyApp}
         fetchTasks={this.fetchTasks}
         fetchAppVersions={this.fetchAppVersions}
+        handleSetAppView={this.handleSetAppView}
         model={this.state.activeApp}
         onDestroy={this.handlePageDestroy}
         onShowTaskDetails={this.handleShowTaskDetails}
@@ -404,6 +531,7 @@ var Marathon = React.createClass({
         onTasksKilled={this.handleTasksKilled}
         restartApp={this.restartApp}
         rollBackApp={this.rollbackToAppVersion}
+        router={this.props.router}
         scaleApp={this.scaleApp}
         suspendApp={this.suspendApp}
         tasksFetchState={this.state.tasksFetchState} />
@@ -419,14 +547,13 @@ var Marathon = React.createClass({
       <TogglableTabsComponent activeTabId={this.state.activeTabId}
         className="container-fluid">
         <TabPaneComponent id="apps">
-          <button type="button" className="btn btn-success navbar-btn"
-              onClick={this.showNewAppModal} >
+          <a href="#newapp" className="btn btn-success navbar-btn" >
             + New App
-          </button>
+          </a>
           <AppListComponent
             collection={this.state.collection}
-            onSelectApp={this.showAppPage}
-            fetchState={this.state.fetchState} />
+            fetchState={this.state.fetchState}
+            router={this.props.router} />
         </TabPaneComponent>
         <TabPaneComponent
             id="deployments"
@@ -442,46 +569,33 @@ var Marathon = React.createClass({
     /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
   },
 
-  getNewAppModal: function () {
-    /* jshint trailing:false, quotmark:false, newcap:false */
-    /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-    return (
-      <NewAppModalComponent
-        model={this.state.activeApp}
-        onDestroy={this.handleModalDestroy}
-        onCreate={this.handleAppCreate}
-        ref="modal" />
-    );
-    /* jshint trailing:true, quotmark:true, newcap:true */
-    /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-  },
-
-  getAboutModal: function () {
-    /* jshint trailing:false, quotmark:false, newcap:false */
-    /* jscs:disable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-    return (
-      <AboutModalComponent
-        onDestroy={this.handleModalDestroy}
-        ref="modal" />
-    );
-    /* jshint trailing:true, quotmark:true, newcap:true */
-    /* jscs:enable disallowTrailingWhitespace, validateQuoteMarks, maximumLineLength */
-  },
-
   render: function () {
     var modal;
     var page;
 
+    /*
+    var route = this.state.route;
+
+    if (route) {
+      var routeName = route.name.charAt(0).toUpperCase() + route.name.slice(1);
+      var routeFunction = this["route" + routeName];
+
+      if (_.isFunction(routeFunction)) {
+        modal = routeFunction.apply(this, route.params);
+      }
+    }
+    */
+
     if (this.state.activeApp != null) {
-      page = this.getAppPage();
+      page = this.routeApps();
     } else {
       page = this.getTabPane();
     }
 
     if (this.state.modalClass === NewAppModalComponent) {
-      modal = this.getNewAppModal();
+      modal = this.routeNewApp();
     } else if (this.state.modalClass === AboutModalComponent) {
-      modal = this.getAboutModal();
+      modal = this.routeAbout();
     }
 
     /* jshint trailing:false, quotmark:false, newcap:false */
@@ -498,11 +612,10 @@ var Marathon = React.createClass({
             <NavTabsComponent
               activeTabId={this.state.activeTabId}
               className="navbar-nav nav-tabs-unbordered"
-              onTabClick={this.onTabClick}
               tabs={tabs} />
             <ul className="nav navbar-nav navbar-right">
               <li>
-                <a href="#/about" onClick={this.showAboutModal}>
+                <a href="#about">
                   About
                 </a>
               </li>

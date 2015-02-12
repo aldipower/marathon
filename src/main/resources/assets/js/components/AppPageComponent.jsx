@@ -1,5 +1,6 @@
 /** @jsx React.DOM */
 
+var _ = require("underscore");
 var React = require("react/addons");
 var AppBreadcrumbsComponent = require("../components/AppBreadcrumbsComponent");
 var AppVersionListComponent = require("../components/AppVersionListComponent");
@@ -8,9 +9,9 @@ var TaskDetailComponent = require("../components/TaskDetailComponent");
 var TaskViewComponent = require("../components/TaskViewComponent");
 var TogglableTabsComponent = require("../components/TogglableTabsComponent");
 
-var tabs = [
-  {id: "tasks", text: "Tasks"},
-  {id: "configuration", text: "Configuration"}
+var tabsTemplate = [
+  {id: "apps/:appid", text: "Tasks"},
+  {id: "apps/:appid/configuration", text: "Configuration"}
 ];
 
 var AppPageComponent = React.createClass({
@@ -23,22 +24,61 @@ var AppPageComponent = React.createClass({
     destroyApp: React.PropTypes.func.isRequired,
     fetchTasks: React.PropTypes.func.isRequired,
     fetchAppVersions: React.PropTypes.func.isRequired,
+    handleSetAppView: React.PropTypes.func.isRequired,
     onDestroy: React.PropTypes.func.isRequired,
     onShowTaskDetails: React.PropTypes.func.isRequired,
     onShowTaskList: React.PropTypes.func.isRequired,
     onTasksKilled: React.PropTypes.func.isRequired,
     restartApp: React.PropTypes.func.isRequired,
     rollBackApp: React.PropTypes.func.isRequired,
+    router: React.PropTypes.object.isRequired,
     scaleApp: React.PropTypes.func.isRequired,
     suspendApp: React.PropTypes.func.isRequired,
     tasksFetchState: React.PropTypes.number.isRequired
   },
 
   getInitialState: function () {
+    var appid = this.props.model.get("id");
+    var activeTabId;
+
+    var tabs = _.reduce(tabsTemplate, function (current, tab) {
+      var id = tab.id.replace(":appid", encodeURIComponent(appid));
+      if (activeTabId == null) {
+        activeTabId = id;
+      }
+      current.push({
+        id: id,
+        text: tab.text
+      });
+
+      return current;
+    }, []);
+
     return {
       activeViewIndex: 0,
-      activeTabId: tabs[0].id
+      activeTabId: activeTabId,
+      tabs: tabs
     };
+  },
+
+  componentDidMount: function () {
+    this.props.handleSetAppView(function (appid, view) {
+      if (appid) {
+        this.setState({
+          activeTabId: "apps/" +
+            encodeURIComponent(appid) +
+            (view ? "/" + view : "")
+        });
+      }
+    }.bind(this));
+
+    this.setState({
+      activeTabId: this.props.router.currentHash()
+    });
+  },
+
+  componentWillUnmount: function () {
+    this.props.handleSetAppView(_.noop);
   },
 
   handleDestroyApp: function () {
@@ -141,8 +181,9 @@ var AppPageComponent = React.createClass({
       <TogglableTabsComponent className="page-body page-body-no-top"
           activeTabId={this.state.activeTabId}
           onTabClick={this.onTabClick}
-          tabs={tabs} >
-        <TabPaneComponent id="tasks">
+          tabs={this.state.tabs} >
+        <TabPaneComponent
+          id={"apps/" + encodeURIComponent(model.get("id"))}>
           <TaskViewComponent
             collection={model.tasks}
             fetchState={this.props.tasksFetchState}
@@ -153,7 +194,7 @@ var AppPageComponent = React.createClass({
             onTaskDetailSelect={this.showTaskDetails} />
         </TabPaneComponent>
         <TabPaneComponent
-          id="configuration"
+          id={"apps/" + encodeURIComponent(model.get("id")) + "/configuration"}
           onActivate={this.props.fetchAppVersions} >
           <AppVersionListComponent
             app={model}
